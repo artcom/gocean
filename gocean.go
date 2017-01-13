@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/sigurn/crc8"
 	"github.com/tarm/serial"
 	"log"
 	"os"
@@ -57,7 +58,75 @@ func openPort(c *serial.Config) *serial.Port {
 	return sp
 }
 
+type IQfyDruckSensor struct {
+	t *RadioTelegram
+}
+
+func (s *IQfyDruckSensor) sensor_id() []byte {
+	//@sensor_id ||= @data[3..5].map{|b| sprintf('%02X', b)}.join(' ')
+	return s.t.data()[3:6]
+}
+func (s *IQfyDruckSensor) state() bool {
+	//(((@data[1] >> 4) & 0x01) == 1) ? :down : :up
+	return (s.t.data()[1]>>4&0x01 == 1)
+}
+func (s *IQfyDruckSensor) String() string {
+	//"<#{sensor_id}:#{state}>"
+	return fmt.Sprintf("<#{%v}:%v>", s.sensor_id(), s.state())
+}
+
+type RadioTelegram struct {
+	raw []byte
+}
+
+func (t *RadioTelegram) String() string {
+	return fmt.Sprintf(
+		"type(%v), size(%v), opt size(%v), choice(%v)",
+		t.package_type(), t.data_size(), t.opt_data_size(), t.choice())
+}
+func (t *RadioTelegram) push(c byte) *RadioTelegram {
+	t.raw = append(t.raw, c)
+	return t
+}
+func (t *RadioTelegram) data_size() int {
+	return (((int(t.raw[1]) << 8) & 0xFF00) | int(t.raw[2]))
+}
+func (t *RadioTelegram) package_type() byte {
+	return t.raw[4]
+}
+func (t *RadioTelegram) data() []byte {
+	return t.raw[6 : 6+t.data_size()]
+}
+
+func (t *RadioTelegram) choice() byte {
+	return t.data()[0]
+}
+func (t *RadioTelegram) IQfyDruckSensor() *IQfyDruckSensor {
+	if t.choice() == 0xF6 {
+		return &IQfyDruckSensor{t}
+	}
+
+	log.Printf("warn: #{choice} unknown package choice: %v", t.choice())
+	return nil
+}
+
+func (t *RadioTelegram) opt_data_size() int {
+	return int(t.raw[3])
+}
+func (t *RadioTelegram) opt_data() []byte {
+	return t.raw[6+t.data_size() : 6+t.data_size()+t.opt_data_size()]
+}
+func (t *RadioTelegram) tail() []byte {
+	return t.raw[6 : 6+t.data_size()+t.opt_data_size()]
+	//pp.bytes[6:(6+pp.data_size+pp.opt_data_size)]
+}
+func (t *RadioTelegram) packet_checksum() byte {
+	return t.raw[len(t.raw)-1]
+}
+
 type PacketParser struct {
+	telegram *RadioTelegram
+
 	bytes         []byte
 	data          []byte
 	data_size     int
@@ -68,14 +137,22 @@ type PacketParser struct {
 	state_cb func()
 }
 
-func checksum_check(bytes []byte, checksum byte) {
+func checksum_check(bytes []byte, checksum byte) bool {
+	table := crc8.MakeTable(crc8.CRC8)
+	crc := crc8.Checksum(bytes, table)
+	if crc != checksum {
+		log.Printf("error: checksum mismatch: %X != %X\n", crc, checksum)
+	}
+
+	return crc == checksum
 }
 
 func (pp *PacketParser) waiting_for_sync() {
-	log.Printf("waiting for sync")
+	//log.Printf("waiting for sync")
 	// log.Printf("len=%d cap=%d %v\n", len(p.bytes), cap(p.bytes), p.bytes)
 	//log.Printf("len=%d cap=%d '%v'\n", len(p.bytes), cap(p.bytes), p.bytes)
-	if pp.bytes[len(pp.bytes)-1] == 0x55 {
+	//if pp.bytes[len(pp.bytes)-1] == 0x55 {
+	if pp.bytes[0] == 0x55 {
 		log.Printf("sync!")
 		pp.state_cb = pp.reading_header
 	} else {
@@ -85,64 +162,70 @@ func (pp *PacketParser) waiting_for_sync() {
 }
 
 func (pp *PacketParser) reading_header() {
-	log.Printf("reading_header")
+	//log.Printf("reading_header")
 	if len(pp.bytes) != 6 {
 		return
 	}
 
-	checksum_check(pp.bytes[1:5], pp.bytes[5])
+	log.Printf("checking header bytes")
+	if !checksum_check(pp.bytes[1:5], pp.bytes[5]) {
+		return
+	}
+	//log.Print("packet: ", pp.telegram)
 
-	pp.data_size = (((int(pp.bytes[1]) << 8) & 0xFF00) | int(pp.bytes[2]))
-	pp.opt_data_size = int(pp.bytes[3])
-	pp.package_type = pp.bytes[4]
-	//puts "header complete(#{@package_type}: #{@data_size}, #{@opt_data_size})"
-	//puts "(header) #{@bytes[0..4].map{|b| sprintf(' %02X', b)}.join}"
+	//pp.data_size = (((int(pp.bytes[1]) << 8) & 0xFF00) | int(pp.bytes[2]))
+	//pp.opt_data_size = int(pp.bytes[3])
+	//pp.package_type = pp.bytes[4]
 
+	// advaning to next parsing state
 	pp.state_cb = pp.reading_data
 }
 
 func (pp *PacketParser) reading_data() {
-	if len(pp.bytes) != 6+pp.data_size {
+	if len(pp.telegram.raw) != 6+pp.telegram.data_size() {
 		return
 	}
 	log.Printf("reading_data")
 
-	pp.data = pp.bytes[6:(6 + pp.data_size)]
+	//pp.data = pp.bytes[6:(6 + pp.data_size)]
 	pp.state_cb = pp.reading_opt_data
 }
 
 func (pp *PacketParser) reading_opt_data() {
-	if len(pp.bytes) != 6+pp.data_size+pp.opt_data_size {
+	dsize := pp.telegram.data_size() + pp.telegram.opt_data_size()
+	if len(pp.telegram.raw) != 6+dsize {
 		return
 	}
 	//#puts "opt data complete"
-	pp.opt_data = pp.bytes[(6 + pp.data_size):(6 + pp.data_size + pp.opt_data_size)]
+	//pp.opt_data = pp.bytes[(6 + pp.data_size):(6 + pp.data_size + pp.opt_data_size)]
+
 	pp.state_cb = pp.read_package_checksum
 }
 
 func (pp *PacketParser) read_package_checksum() {
-	checksum_check(pp.bytes[6:(6+pp.data_size+pp.opt_data_size)], pp.bytes[len(pp.bytes)-1])
-
-	log.Printf("package complete & ok: ", pp.bytes[6])
-	/*
-	   #s1 = @data.map{|b| sprintf(" %02X", b)}.join
-	   #s2 = @opt_data.map{|b| sprintf(" %02X", b)}.join
-	   #puts "(#{@bytes.size}) #{s1} | #{s2}"
-
-	   @on_package && @on_package.call(
-	   RadioTelegram.new(data: @data, opt_data: @opt_data)
-	   )
-	*/
+	checksum_check(pp.telegram.tail(), pp.telegram.packet_checksum())
+	s := pp.telegram.IQfyDruckSensor()
+	log.Print("package complete & ok:\n", pp.telegram) // pp.bytes[6])
 	pp.reset()
+
+	if s == nil {
+		log.Print("warn: IQfyDruckSensorrno???")
+		return
+	}
+	log.Print("sensor: ", s)
 }
 
+// starting next packet parse and clearing whatever state we had until now
 func (pp *PacketParser) reset() {
 	pp.bytes = pp.bytes[:0]
 	pp.state_cb = pp.waiting_for_sync
+	pp.telegram = &RadioTelegram{}
 }
 
 func (p *PacketParser) push(c byte) {
+	p.telegram.push(c)
 	p.bytes = append(p.bytes, c)
+	//log.Print(p.telegram)
 	//log.Printf("len=%d cap=%d %v\n", len(p.bytes), cap(p.bytes), p.bytes)
 	p.state_cb()
 }
