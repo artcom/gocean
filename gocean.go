@@ -17,13 +17,19 @@ func (s *IQfyDruckSensor) sensor_id() []byte {
 	//@sensor_id ||= @data[3..5].map{|b| sprintf('%02X', b)}.join(' ')
 	return s.t.data()[3:6]
 }
-func (s *IQfyDruckSensor) state() bool {
-	//(((@data[1] >> 4) & 0x01) == 1) ? :down : :up
-	return (s.t.data()[1]>>4&0x01 == 1)
+
+// returns "up" or "down" depending on sonsor state
+func (s *IQfyDruckSensor) state() string {
+	// return (s.t.data()[1]>>4&0x01 == 1)
+	b := "up"
+	if s.t.data()[1]>>4&0x01 == 1 {
+		b = "down"
+	}
+	return b
 }
 func (s *IQfyDruckSensor) String() string {
 	//"<#{sensor_id}:#{state}>"
-	return fmt.Sprintf("<#{%v}:%v>", s.sensor_id(), s.state())
+	return fmt.Sprintf("<%x:%v>", s.sensor_id(), s.state())
 }
 
 // the basic package structure for messages comming from the enocean usb serial
@@ -112,7 +118,7 @@ func (pp *PacketParser) waiting_for_sync() {
 		pp.state_cb = pp.reading_header
 	} else {
 		log.Printf("BAD sync ;(")
-		pp.bytes = pp.bytes[:0]
+		pp.reset()
 	}
 }
 
@@ -160,7 +166,7 @@ func (pp *PacketParser) read_package_checksum() {
 		log.Print("warn: IQfyDruckSensorrno???")
 		return
 	}
-	log.Print("sensor: ", s)
+	log.Print(s)
 }
 
 // starting next packet parse and clearing whatever state we had until now
