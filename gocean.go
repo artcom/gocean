@@ -5,7 +5,14 @@ import (
 	"fmt"
 	"github.com/sigurn/crc8"
 	"github.com/tarm/serial"
+	"io/ioutil"
 	"log"
+	"os"
+)
+
+var (
+	// debug output only, can be switched on with -verbose cmdline flag
+	dbg = log.New(ioutil.Discard, "", 0)
 )
 
 // the only enocean radio telegram package format we can actually decode
@@ -55,11 +62,9 @@ func (t *RadioTelegram) package_type() byte {
 func (t *RadioTelegram) data() []byte {
 	return t.raw[6 : 6+t.data_size()]
 }
-
 func (t *RadioTelegram) choice() byte {
 	return t.data()[0]
 }
-
 func (t *RadioTelegram) opt_data_size() int {
 	return int(t.raw[3])
 }
@@ -101,38 +106,39 @@ type PacketParser struct {
 	state_cb func()
 }
 
-func checksum_check(bytes []byte, checksum byte) bool {
+func checksum_check(bytes []byte, expected byte) bool {
 	table := crc8.MakeTable(crc8.CRC8)
 	crc := crc8.Checksum(bytes, table)
-	if crc != checksum {
-		log.Printf("error: checksum mismatch: %X != %X\n", crc, checksum)
+	if crc != expected {
+		dbg.Printf("checksum error: %X != %X\n", crc, expected)
 	}
-
-	return crc == checksum
+	return crc == expected
 }
 
 func (pp *PacketParser) waiting_for_sync() {
-	//log.Printf("waiting for sync")
+	dbg.Printf("waiting for sync")
 	if pp.bytes[0] == 0x55 {
-		log.Printf("sync!")
+		dbg.Printf("sync!")
 		pp.state_cb = pp.reading_header
 	} else {
-		log.Printf("BAD sync ;(")
+		dbg.Printf("BAD sync ;(")
 		pp.reset()
 	}
 }
 
 func (pp *PacketParser) reading_header() {
-	//log.Printf("reading_header")
+	dbg.Printf("reading_header")
 	if len(pp.bytes) != 6 {
 		return
 	}
 
-	log.Printf("checking header bytes")
-	if !checksum_check(pp.bytes[1:5], pp.bytes[5]) {
+	dbg.Printf("checking header bytes")
+	bytes, checksum := pp.bytes[1:5], pp.bytes[5]
+	if !checksum_check(bytes, checksum) {
+		log.Printf("error in header checksum: %X\n", checksum)
 		return
 	}
-	//log.Print("packet: ", pp.telegram)
+	//dbg.Print("packet: ", pp.telegram)
 
 	// advaning to next parsing state
 	pp.state_cb = pp.reading_data
@@ -142,7 +148,7 @@ func (pp *PacketParser) reading_data() {
 	if len(pp.telegram.raw) != 6+pp.telegram.data_size() {
 		return
 	}
-	log.Printf("reading_data")
+	dbg.Printf("reading_data")
 
 	pp.state_cb = pp.reading_opt_data
 }
@@ -157,25 +163,34 @@ func (pp *PacketParser) reading_opt_data() {
 }
 
 func (pp *PacketParser) read_package_checksum() {
-	checksum_check(pp.telegram.tail(), pp.telegram.packet_checksum())
+	if !checksum_check(pp.telegram.tail(), pp.telegram.packet_checksum()) {
+		log.Println("error in package checksum, dumping package")
+		pp.reset()
+		return
+	}
+
 	s := pp.telegram.IQfyDruckSensor()
-	log.Print("package complete & ok:\n", pp.telegram) // pp.bytes[6])
+	dbg.Print("package complete & ok: ", pp.telegram) // pp.bytes[6])
 	pp.reset()
 
 	if s == nil {
-		log.Print("warn: IQfyDruckSensorrno???")
+		dbg.Print("warn: IQfyDruckSensorrno???")
 		return
 	}
-	log.Print(s)
+
+	// print current button state on stdout
+	log.Println(s)
 }
 
-// starting next packet parse and clearing whatever state we had until now
+// reset: starting next packet parse and clearing whatever state we had until
+// now
 func (pp *PacketParser) reset() {
 	pp.bytes = pp.bytes[:0]
 	pp.state_cb = pp.waiting_for_sync
 	pp.telegram = &RadioTelegram{}
 }
 
+// each time a new bytes arrives the state callback is invoked
 func (p *PacketParser) push(c byte) {
 	p.telegram.push(c)
 	p.bytes = append(p.bytes, c)
@@ -192,38 +207,76 @@ func loopread(port *serial.Port) {
 	n, err := port.Read(buf) // initial read..
 	// ..and than loop until EOF
 	for ; err == nil; n, err = port.Read(buf) {
-		log.Printf("(%d) :: %q", n, buf[:n])
+		dbg.Printf("(%d) :: %q", n, buf[:n])
+		// bytes are pushed one by ony and processed according to
+		// parse/package state
 		for _, c := range buf[:n] {
 			pp.push(c)
 		}
 	}
 
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
 // take config and return an open serial port ready for reading
-func openPort(c *serial.Config) *serial.Port {
-	log.Printf("open device: '%s'", c.Name)
-	sp, err := serial.OpenPort(c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return sp
+func openPort(c *serial.Config) (*serial.Port, error) {
+	dbg.Printf("open device: '%s'", c.Name)
+	return serial.OpenPort(c)
 }
 
+// LogWriter local type definition to suppress/enable debug outputs on demand
+/*
+type LogWriter struct {
+	io.Writer
+}
+
+func (w *LogWriter) enable()  { w.Writer = os.Stdout }
+func (w *LogWriter) disable() { w.Writer = ioutil.Discard }
+*/
+
 func main() {
+	// output control
+	verbose := flag.Bool("verbose", false, "verbosity, print debug/info")
+	flag.BoolVar(verbose, "v", false, "--verbose (same)")
+
+	// prepend log output with/out timestamp prefix.
+	tslp := flag.Bool("ts", false, "timestamp log prefix")
+
+	// serial line control
 	baud := flag.Int("baud", 57600, "baudrate")
 	//flag.Var(&parity, "parity", "parity mode: none, even, odd")
 
 	flag.Parse()
-	log.Print("baud: ", *baud)
-	//log.Print("parity: ", &parity)
-	log.Print("argv: ", flag.Args())
+
+	// enable debug output only on demand, default be quiet
+	//dbg := log.New(ioutil.Discard, "", log.LstdFlags)
+	if *verbose {
+		dbg.SetOutput(os.Stdout)
+	}
+
+	if *tslp {
+		dbg.SetFlags(log.LstdFlags)
+		log.SetFlags(log.LstdFlags)
+	} else {
+		dbg.SetFlags(0)
+		log.SetFlags(0)
+	}
+	dbg.SetPrefix("(debug) ")
+
+	dbg.Println("argv: ", flag.Args())
+	dbg.Println("baud: ", *baud)
+	dbg.Println("verbosity: ", *verbose)
+	// log.Print("parity: ", &parity)
 
 	cfg := &serial.Config{Name: flag.Arg(0), Baud: *baud}
-	port := openPort(cfg)
+	port, err := openPort(cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, " ## FATAL:", err)
+		os.Exit(-1)
+	}
+
 	loopread(port)
 }
 
