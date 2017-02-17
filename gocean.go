@@ -10,10 +10,8 @@ import (
 	"os"
 )
 
-var (
-	// debug output only, can be switched on with -verbose cmdline flag
-	dbg = log.New(ioutil.Discard, "", 0)
-)
+// debug output only, can be switched on with -verbose cmdline flag
+var dbg = log.New(ioutil.Discard, "", 0)
 
 // the only enocean radio telegram package format we can actually decode
 type IQfyDruckSensor struct {
@@ -204,6 +202,7 @@ func loopread(port *serial.Port) {
 	pp := PacketParser{}
 	pp.reset()
 
+	log.Println("start reading device now...")
 	n, err := port.Read(buf) // initial read..
 	// ..and than loop until EOF
 	for ; err == nil; n, err = port.Read(buf) {
@@ -221,9 +220,16 @@ func loopread(port *serial.Port) {
 }
 
 // take config and return an open serial port ready for reading
-func openPort(c *serial.Config) (*serial.Port, error) {
+func openPort(c *serial.Config) *serial.Port {
 	dbg.Printf("open device: '%s'", c.Name)
-	return serial.OpenPort(c)
+
+	sp, err := serial.OpenPort(c)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, " ## FATAL:", err)
+		os.Exit(-1)
+	}
+
+	return sp
 }
 
 // LogWriter local type definition to suppress/enable debug outputs on demand
@@ -237,17 +243,18 @@ func (w *LogWriter) disable() { w.Writer = ioutil.Discard }
 */
 
 func main() {
-	// output control
+	// output control, activate -v for debugging
 	verbose := flag.Bool("verbose", false, "verbosity, print debug/info")
 	flag.BoolVar(verbose, "v", false, "--verbose (same)")
 
-	// prepend log output with/out timestamp prefix.
+	// prepend log output with or without timestamp prefix.
 	tslp := flag.Bool("ts", false, "timestamp log prefix")
 
-	// serial line control
+	// serial line control, only baudrate for now,
 	baud := flag.Int("baud", 57600, "baudrate")
 	//flag.Var(&parity, "parity", "parity mode: none, even, odd")
 
+	// scan cmdline
 	flag.Parse()
 
 	// enable debug output only on demand, default be quiet
@@ -255,28 +262,25 @@ func main() {
 	if *verbose {
 		dbg.SetOutput(os.Stdout)
 	}
+	// debug will always be prefixed to be recognizable
+	dbg.SetPrefix("(debug) ")
 
 	if *tslp {
+		// only prepend default timestamp when -ts option is given
 		dbg.SetFlags(log.LstdFlags)
 		log.SetFlags(log.LstdFlags)
 	} else {
 		dbg.SetFlags(0)
 		log.SetFlags(0)
 	}
-	dbg.SetPrefix("(debug) ")
 
+	// debug output of actuall settings
 	dbg.Println("argv: ", flag.Args())
 	dbg.Println("baud: ", *baud)
 	dbg.Println("verbosity: ", *verbose)
 	// log.Print("parity: ", &parity)
 
-	cfg := &serial.Config{Name: flag.Arg(0), Baud: *baud}
-	port, err := openPort(cfg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, " ## FATAL:", err)
-		os.Exit(-1)
-	}
-
+	port := openPort(&serial.Config{Name: flag.Arg(0), Baud: *baud})
 	loopread(port)
 }
 
