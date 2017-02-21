@@ -8,12 +8,13 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	//"reflect"
 )
 
 // debug output only, can be switched on with -verbose cmdline flag
 var dbg = log.New(ioutil.Discard, "", 0)
 
-// the only enocean radio telegram package format we can actually decode
+// the only enocean radio telegram packet format we can actually decode
 type IQfyDruckSensor struct {
 	t *RadioTelegram
 }
@@ -37,7 +38,7 @@ func (s *IQfyDruckSensor) String() string {
 	return fmt.Sprintf("<%x:%v>", s.sensor_id(), s.state())
 }
 
-// the basic package structure for messages comming from the enocean usb serial
+// the basic packet structure for messages comming from the enocean usb serial
 type RadioTelegram struct {
 	raw []byte
 }
@@ -45,7 +46,7 @@ type RadioTelegram struct {
 func (t *RadioTelegram) String() string {
 	return fmt.Sprintf(
 		"type(%v), size(%v), opt size(%v), choice(%v)",
-		t.package_type(), t.data_size(), t.opt_data_size(), t.choice())
+		t.packet_type(), t.data_size(), t.opt_data_size(), t.choice())
 }
 func (t *RadioTelegram) push(c byte) *RadioTelegram {
 	t.raw = append(t.raw, c)
@@ -54,7 +55,7 @@ func (t *RadioTelegram) push(c byte) *RadioTelegram {
 func (t *RadioTelegram) data_size() int {
 	return (((int(t.raw[1]) << 8) & 0xFF00) | int(t.raw[2]))
 }
-func (t *RadioTelegram) package_type() byte {
+func (t *RadioTelegram) packet_type() byte {
 	return t.raw[4]
 }
 func (t *RadioTelegram) data() []byte {
@@ -84,11 +85,11 @@ func (t *RadioTelegram) IQfyDruckSensor() *IQfyDruckSensor {
 		return &IQfyDruckSensor{t}
 	}
 
-	log.Printf("warn: #{choice} unknown package choice: %v", t.choice())
+	log.Printf("warn: #{choice} unknown packet choice: %v", t.choice())
 	return nil
 }
 
-// package parser knows about the structure of the telegram and decodes the
+// packet parser knows about the structure of the telegram and decodes the
 // sync and checksum bytes from the serial binary byte stream coming from the
 // usb device into a stream of RadioTelegram structs
 type PacketParser struct {
@@ -99,7 +100,7 @@ type PacketParser struct {
 	data_size     int
 	opt_data      []byte
 	opt_data_size int
-	package_type  byte
+	packet_type   byte
 
 	state_cb func()
 }
@@ -157,18 +158,18 @@ func (pp *PacketParser) reading_opt_data() {
 		return
 	}
 
-	pp.state_cb = pp.read_package_checksum
+	pp.state_cb = pp.read_packet_checksum
 }
 
-func (pp *PacketParser) read_package_checksum() {
+func (pp *PacketParser) read_packet_checksum() {
 	if !checksum_check(pp.telegram.tail(), pp.telegram.packet_checksum()) {
-		log.Println("error in package checksum, dumping package")
+		log.Println("error in packet checksum, dumping packet")
 		pp.reset()
 		return
 	}
 
 	s := pp.telegram.IQfyDruckSensor()
-	dbg.Print("package complete & ok: ", pp.telegram) // pp.bytes[6])
+	dbg.Print("packet complete & ok: ", pp.telegram) // pp.bytes[6])
 	pp.reset()
 
 	if s == nil {
@@ -208,7 +209,7 @@ func loopread(port *serial.Port) {
 	for ; err == nil; n, err = port.Read(buf) {
 		dbg.Printf("(%d) :: %q", n, buf[:n])
 		// bytes are pushed one by ony and processed according to
-		// parse/package state
+		// parse/packet state
 		for _, c := range buf[:n] {
 			pp.push(c)
 		}
@@ -243,6 +244,7 @@ func (w *LogWriter) disable() { w.Writer = ioutil.Discard }
 */
 
 func main() {
+
 	// output control, activate -v for debugging
 	verbose := flag.Bool("verbose", false, "verbosity, print debug/info")
 	flag.BoolVar(verbose, "v", false, "--verbose (same)")
@@ -258,15 +260,14 @@ func main() {
 	flag.Parse()
 
 	// enable debug output only on demand, default be quiet
-	//dbg := log.New(ioutil.Discard, "", log.LstdFlags)
 	if *verbose {
 		dbg.SetOutput(os.Stdout)
 	}
-	// debug will always be prefixed to be recognizable
+	// debug output always be prefixed to be recognizable
 	dbg.SetPrefix("(debug) ")
 
+	// enable timestamp logging prefix only when -ts option is present
 	if *tslp {
-		// only prepend default timestamp when -ts option is given
 		dbg.SetFlags(log.LstdFlags)
 		log.SetFlags(log.LstdFlags)
 	} else {
