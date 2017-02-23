@@ -102,7 +102,8 @@ type PacketParser struct {
 	opt_data_size int
 	packet_type   byte
 
-	state_cb func()
+	state_cb      func()
+	packetHandler func(s *IQfyDruckSensor)
 }
 
 func checksum_check(bytes []byte, expected byte) bool {
@@ -178,7 +179,9 @@ func (pp *PacketParser) read_packet_checksum() {
 	}
 
 	// print current button state on stdout
-	log.Println(s)
+	if pp.packetHandler != nil {
+		pp.packetHandler(s)
+	}
 }
 
 // reset: starting next packet parse and clearing whatever state we had until
@@ -197,29 +200,6 @@ func (p *PacketParser) push(c byte) {
 	p.state_cb()
 }
 
-func loopread(port *serial.Port) {
-	buf := make([]byte, 128)
-
-	pp := PacketParser{}
-	pp.reset()
-
-	log.Println("start reading device now...")
-	n, err := port.Read(buf) // initial read..
-	// ..and than loop until EOF
-	for ; err == nil; n, err = port.Read(buf) {
-		dbg.Printf("(%d) :: %q", n, buf[:n])
-		// bytes are pushed one by ony and processed according to
-		// parse/packet state
-		for _, c := range buf[:n] {
-			pp.push(c)
-		}
-	}
-
-	if err != nil {
-		log.Println(err)
-	}
-}
-
 // take config and return an open serial port ready for reading
 func openPort(c *serial.Config) *serial.Port {
 	dbg.Printf("open device: '%s'", c.Name)
@@ -231,6 +211,29 @@ func openPort(c *serial.Config) *serial.Port {
 	}
 
 	return sp
+}
+
+// open named device fill and read input stream byte by byte to push function
+func loopread(devname string, baud int, push func(byte)) {
+
+	port := openPort(&serial.Config{Name: devname, Baud: baud})
+	buf := make([]byte, 128)
+
+	log.Println("start reading device now...")
+	n, err := port.Read(buf) // initial read..
+	// ..and than loop until EOF
+	for ; err == nil; n, err = port.Read(buf) {
+		dbg.Printf("(%d) :: %q", n, buf[:n])
+		// bytes are pushed one by ony and processed according to
+		// parse/packet state
+		for _, c := range buf[:n] {
+			push(c) // forward byte to the next processing level
+		}
+	}
+
+	if err != nil {
+		log.Println(err)
+	}
 }
 
 // LogWriter local type definition to suppress/enable debug outputs on demand
@@ -281,50 +284,14 @@ func main() {
 	dbg.Println("verbosity: ", *verbose)
 	// log.Print("parity: ", &parity)
 
-	port := openPort(&serial.Config{Name: flag.Arg(0), Baud: *baud})
-	loopread(port)
-}
-
-/* parity flag option and code not actually use, so commented it
-
-
-// Create a new type for parity to handle cmd line parsing
-type ParityFlag serial.Parity
-
-var (
-	baud   *int       = nil
-	parity ParityFlag = ParityFlag(serial.ParityNone)
-)
-
-// print parity
-func (p *ParityFlag) String() string {
-	s := fmt.Sprintf("ooops, inconsistent internal parity value: '%v'", *p)
-	switch serial.Parity(*p) {
-	case serial.ParityNone:
-		s = "none"
-	case serial.ParityOdd:
-		s = "odd"
-	case serial.ParityEven:
-		s = "even"
+	// create parser instance in default start state
+	pp := PacketParser{}
+	pp.reset()
+	pp.packetHandler = func(s *IQfyDruckSensor) {
+		// print current button state on stdout
+		log.Println(s)
 	}
-	return s
-}
 
-// parse parity
-func (s *ParityFlag) Set(value string) error {
-	log.Print("setting parity: '", value, "'")
-	switch value {
-	case "none", "n", "0":
-		*s = ParityFlag(serial.ParityNone)
-	case "odd", "o":
-		*s = ParityFlag(serial.ParityOdd)
-	case "even", "e":
-		*s = ParityFlag(serial.ParityEven)
-	default:
-		flag.PrintDefaults()
-		//os.Exit(1)
-	}
-	log.Print("setting parity: '", *s, "'")
-	return nil
+	// start portreading and pushing bytewise to the parser
+	loopread(flag.Arg(0), *baud, func(c byte) { pp.push(c) })
 }
-*/
