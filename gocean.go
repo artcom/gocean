@@ -12,16 +12,16 @@ import (
 )
 
 // debug output only, can be switched on with -verbose cmdline flag
-var dbg = log.New(ioutil.Discard, "", 0)
+var dbg = log.New(os.Stdout, "", 0)
 
 // the only enocean radio telegram packet format we can actually decode
 type IQfyDruckSensor struct {
 	t *RadioTelegram
 }
 
-func (s *IQfyDruckSensor) sensor_id() []byte {
+func (s *IQfyDruckSensor) sensor_id() string {
 	//@sensor_id ||= @data[3..5].map{|b| sprintf('%02X', b)}.join(' ')
-	return s.t.data()[3:6]
+	return fmt.Sprintf("%x", s.t.data()[3:6])
 }
 
 // returns "up" or "down" depending on sonsor state
@@ -35,7 +35,7 @@ func (s *IQfyDruckSensor) state() string {
 }
 func (s *IQfyDruckSensor) String() string {
 	//"<#{sensor_id}:#{state}>"
-	return fmt.Sprintf("<%x:%v>", s.sensor_id(), s.state())
+	return fmt.Sprintf("<%s:%v>", s.sensor_id(), s.state())
 }
 
 // the basic packet structure for messages comming from the enocean usb serial
@@ -196,7 +196,6 @@ func (pp *PacketParser) reset() {
 func (p *PacketParser) push(c byte) {
 	p.telegram.push(c)
 	p.bytes = append(p.bytes, c)
-	//log.Print(p.telegram)
 	p.state_cb()
 }
 
@@ -246,8 +245,34 @@ func (w *LogWriter) enable()  { w.Writer = os.Stdout }
 func (w *LogWriter) disable() { w.Writer = ioutil.Discard }
 */
 
-func main() {
+/*  list of sensor ids which are reported. Can be controlled by command line
+*  option. When no option is given, all received sensors are reported. This
+*  makes sense when you need to define a whitelist of sensors which are
+*  actually recognized */
+type idList []string
 
+func (l *idList) contains(s string) bool {
+	for _, e := range *l {
+		if e == s {
+			return true
+		}
+	}
+	return false
+}
+
+// flag.Value interface
+func (l *idList) String() string {
+	return fmt.Sprint("-->%v<--", *l)
+}
+
+// flag.Value interface
+func (l *idList) Set(val string) error {
+	*l = append(*l, val)
+	// dbg.Printf("only id list: %v\n", *l)
+	return nil
+}
+
+func main() {
 	// output control, activate -v for debugging
 	verbose := flag.Bool("verbose", false, "verbosity, print debug/info")
 	flag.BoolVar(verbose, "v", false, "--verbose (same)")
@@ -259,12 +284,15 @@ func main() {
 	baud := flag.Int("baud", 57600, "baudrate")
 	//flag.Var(&parity, "parity", "parity mode: none, even, odd")
 
+	var idList idList
+	flag.Var(&idList, "id", "comma separeted list of included sensor ids. If given, only sensor ids from this list are reported")
+
 	// scan cmdline
 	flag.Parse()
 
 	// enable debug output only on demand, default be quiet
-	if *verbose {
-		dbg.SetOutput(os.Stdout)
+	if !*verbose {
+		dbg.SetOutput(ioutil.Discard)
 	}
 	// debug output always be prefixed to be recognizable
 	dbg.SetPrefix("(debug) ")
@@ -282,14 +310,16 @@ func main() {
 	dbg.Println("argv: ", flag.Args())
 	dbg.Println("baud: ", *baud)
 	dbg.Println("verbosity: ", *verbose)
-	// log.Print("parity: ", &parity)
+	dbg.Println("sensor id list: ", idList)
 
 	// create parser instance in default start state
 	pp := PacketParser{}
 	pp.reset()
 	pp.packetHandler = func(s *IQfyDruckSensor) {
-		// print current button state on stdout
-		log.Println(s)
+		dbg.Printf("->%s<-\n", s.sensor_id())
+		if len(idList) == 0 || idList.contains(s.sensor_id()) {
+			log.Println(s) // print current button state on stdout
+		}
 	}
 
 	// start portreading and pushing bytewise to the parser
