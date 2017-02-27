@@ -56,9 +56,9 @@ Found in its own _abandoned_ repo at: https://github.com/artcom/enocean-ruby-rea
 
 
 [1]: <http://www.iqfy.de/de/produkte/product/Drucksensor.html>
-[2]: [https://www.enocean.com/en/enocean_modules/usb-300-oem/]()
-[3]: [https://www.enocean.com/en/]()
-[4]: [https://www.enocean.com/esp]()
-[5]: [https://golang.org/project/]()
-[6]: [EnOceanSerialProtocol3.pdf](EnOceanSerialProtocol3.pdf)
+[2]: <https://www.enocean.com/en/enocean_modules/usb-300-oem/>
+[3]: <https://www.enocean.com/en/>
+[4]: <https://www.enocean.com/esp>
+[5]: <https://golang.org/project/>
+[6]: <EnOceanSerialProtocol3.pdf>
 
