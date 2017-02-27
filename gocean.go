@@ -174,13 +174,15 @@ func (pp *PacketParser) read_packet_checksum() {
 	pp.reset()
 
 	if s == nil {
-		dbg.Print("warn: IQfyDruckSensorrno???")
+		dbg.Print("warn: IQfyDruckSensor nil??")
 		return
 	}
 
 	// print current button state on stdout
 	if pp.packetHandler != nil {
 		pp.packetHandler(s)
+	} else {
+		dbg.Print("warn: no packet handler")
 	}
 }
 
