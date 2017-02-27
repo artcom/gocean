@@ -1,6 +1,3 @@
-**WIP: Footnotes not working in github markdown, this README will be rewritten**
-
-
 # Wireless & No batteries! IoT Button with EnOcean in Go (and/or ruby)
 
 _Note: The EnOcean sensor & receiver combo might not be the the cheapest way of getting an IoT switch integrated but I was looking especially for a wireless solution and really liked the NO batteries needed piezo approach._
@@ -52,7 +49,7 @@ When the packet is complete it checked for sensor type code is `0xF6` _(the only
 
 ## Ruby Code
 
-Found in its own _abandoned_ repo at: https://github.com/artcom/enocean-ruby-reader
+To be found in its own _abandoned_ repo at: https://github.com/artcom/enocean-ruby-reader
 
 
 [1]: <http://www.iqfy.de/de/produkte/product/Drucksensor.html>
