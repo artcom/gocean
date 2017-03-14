@@ -38,6 +38,12 @@ start reading device now...
   can be used multiple times to add more than one sensor id to the whitelist.
   When no id is given all received sensor packets are reported. 
 
+### Raspberry GPIO switching
+```
+$ ./gocean.go --gpio=17 /dev/tty.usbserial-FTWN15UU  
+```
+When the flag is given the pin is switched along the button states up & down to low & high. When not running on a raspberry or the gpio API can't be opened a warning is printed on start-up but the programm continues anyhow. 
+
 ## Hardware
 
 ### The Sender: IQfy Funk-Drucksensor 450FU-BLS/KKF
