@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"github.com/sigurn/crc8"
-	"github.com/stianeikeland/go-rpio"
 	"github.com/tarm/serial"
 	"io/ioutil"
 	"log"
@@ -103,8 +102,8 @@ type PacketParser struct {
 	opt_data_size int
 	packet_type   byte
 
-	state_cb      func()
-	packetHandler func(s *IQfyDruckSensor)
+	state_cb       func()
+	packetCallback func(s *IQfyDruckSensor)
 }
 
 func checksum_check(bytes []byte, expected byte) bool {
@@ -180,8 +179,8 @@ func (pp *PacketParser) read_packet_checksum() {
 	}
 
 	// print current button state on stdout
-	if pp.packetHandler != nil {
-		pp.packetHandler(s)
+	if pp.packetCallback != nil {
+		pp.packetCallback(s)
 	} else {
 		dbg.Print("warn: no packet handler")
 	}
@@ -276,46 +275,37 @@ func (l *idList) Set(val string) error {
 	return nil
 }
 
-// raspberry GPIO connection
-func openGpioPin(no int) (pin rpio.Pin, err error) {
-	if err := rpio.Open(); err != nil {
-		return pin, err
-		//fmt.Println(err)
-		//os.Exit(1)
-	}
-
-	pin = rpio.Pin(no)
-	pin.Output()
-
-	return pin, err
-}
-
 // define packet handlers for various callback actions
-type packetHandler interface {
+type PacketHandler interface {
 	handle_sensor_packet(s *IQfyDruckSensor)
 }
+
+func AppendHandlerPrepper(f func()) {
+	handlerPrepper = append(handlerPrepper, f)
+}
+func AppendHandler(h PacketHandler) {
+	handlerList = append(handlerList, h)
+}
+
+var (
+	handlerPrepper []func()
+
+	// install list of packet handler funcs which are call on any packet
+	// change coming from the packet parser
+	handlerList []PacketHandler
+)
+
+// make func wrapper to make plain function act as handler struct
 type packetHandlerFunc func(s *IQfyDruckSensor)
 
 func (cb packetHandlerFunc) handle_sensor_packet(s *IQfyDruckSensor) {
 	cb(s)
 }
 
+// ~hander func wrapper
+
 func print_packet_state(s *IQfyDruckSensor) {
 	log.Println(s) // print current button state on stdout
-}
-
-//func (pin rpio.Pin) toggle_gpio_button(s *IQfyDruckSensor) {
-type GPIOHandler struct {
-	pin rpio.Pin
-}
-
-func (h GPIOHandler) handle_sensor_packet(s *IQfyDruckSensor) {
-	log.Println(s) // print current button state on stdout
-	if s.state() == "down" {
-		h.pin.High()
-	} else {
-		h.pin.Low()
-	}
 }
 
 // ~packer hander functions
@@ -334,9 +324,6 @@ func main() {
 	// serial line control, only baudrate for now,
 	baud := flag.Int("baud", 57600, "baudrate")
 	//flag.Var(&parity, "parity", "parity mode: none, even, odd")
-
-	// activate gpio pin output
-	gpio := flag.Int("gpio", -1, "GPIO pin #no output, -1 means no gpio")
 
 	var idList idList
 	flag.Var(&idList, "id", "comma separeted list of included sensor ids. If given, only sensor ids from this list are reported")
@@ -366,39 +353,26 @@ func main() {
 	dbg.Println("verbosity: ", *verbose)
 	dbg.Println("sensor id list: ", idList)
 
+	// after log setup & cmd parsing give handler a chance to add themselfs
+	for f_idx := range handlerPrepper {
+		handlerPrepper[f_idx]()
+	}
+
 	// create parser instance in default start state
 	pp := PacketParser{}
 	pp.reset()
 
-	// install list of packet handler funcs which are call on any packet
-	// change coming from the packet parser
-	var handler_funcs []packetHandler
-
 	// default packet dumper always on list
 	if !*quiet {
-		handler_funcs = append(
-			handler_funcs, packetHandlerFunc(print_packet_state))
+		AppendHandler(packetHandlerFunc(print_packet_state))
 	}
 
-	// gpio swiching only added when actually requested by cmd line
-	if *gpio != -1 {
-		// aquire GPIO handle for switching leds
-		pin, err := openGpioPin(17)
-		if err != nil {
-			log.Printf(" ## GPIO ignored: %v", err)
-		} else {
-			//handler_funcs = append(handler_funcs, toggle_gpio_button)
-			h := &GPIOHandler{pin: pin}
-			handler_funcs = append(handler_funcs, h)
-		}
-	}
-
-	pp.packetHandler = func(s *IQfyDruckSensor) {
+	pp.packetCallback = func(s *IQfyDruckSensor) {
 		dbg.Printf("->%s<-\n", s.sensor_id())
 		// filter for "unwanted" packets and call packet handlers func
 		if len(idList) == 0 || idList.contains(s.sensor_id()) {
-			for i := range handler_funcs {
-				handler_funcs[i].handle_sensor_packet(s)
+			for i := range handlerList {
+				handlerList[i].handle_sensor_packet(s)
 			}
 		}
 	}
