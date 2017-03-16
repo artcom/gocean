@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/deployment/gocean-service/gocean --gpio=17  /dev/ttyUSB0  2>&1

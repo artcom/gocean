@@ -70,10 +70,90 @@ _I'm still new to Go and on my way finding out how I like things to look like in
 
 When the packet is complete it checked for sensor type code is `0xF6` _(the only only this program understands)_ the packet is made into an `IQfyDruckSensor` struct from which its `state` and `sensor_id` gets printed to `stdout`. 
 
-## Ruby Code
+_Note: the (old) Ruby code Found in its own _abandoned_ repo at: <https://github.com/artcom/enocean-ruby-reader>_
 
-Found in its own _abandoned_ repo at: <https://github.com/artcom/enocean-ruby-reader>
+## Raspberry GPIO Led Switching Service Daemon
 
-## Next
+For the GPIO connectivity I use the go native no extras [go-rpio] library which even already has a [blinker example]. This lib is free of dependencies to raspberry native stuff so you can even have it in the code and compile and run it on mac osx. On mac there are no GPIO pins, but at least you don't have to maintain seperate code bases for different platforms. It just warns that there is no GPIO to open and continues.
 
-For demonstration purpose I cross compiled this go code to a raspberry and made it toggle GPIO leds. From there you can connect it to whatever you want.
+[go-rpio]: https://github.com/stianeikeland/go-rpio
+[blinker example]: https://github.com/stianeikeland/go-rpio/blob/master/examples/blinker/blinker.go
+
+Now that you have GPIO support in the code can connect it to the physical world by means of a raspberry pin. To demo I use a green LED blinking. Three things you need: 1. the (cross-compiled) go exe, 2. The actuall LED wired to the GPIO pin and 3. best to have the go exe installed as a service so its started, supervised and properly logged. 
+
+### 1. Raspberry Golang Cross Compile
+
+Could hardly be more simple than with go, all you need is some ENV vars:
+
+```
+$ GOOS=linux GOARCH=arm GOARM=7 go build
+```
+
+and you get a statically linked go exe which to put on your raspberry.
+
+### 2. LED wired to GPIO pin
+
+For the electrical set-up see this post:
+
+* <https://www.raspberrypi.org/learning/physical-computing-guide/connect-led/>
+
+There is only one thing I did differently. I skipped the resistor. Makes it even easier, no need for that. 
+
+Now, at least for me, one troublesome question for me was, which pin is what. Not all pins are equal and there are various numbering schemes in use besides the physical. Take the [gpio utility] to the rescue. A simple tool which gives you access to the GPIO:
+
+```
+$ gpio readall
+
+ +-----+-----+---------+------+---+---Pi 3---+---+------+---------+-----+-----+
+ | BCM | wPi |   Name  | Mode | V | Physical | V | Mode | Name    | wPi | BCM |
+ +-----+-----+---------+------+---+----++----+---+------+---------+-----+-----+
+ |     |     |    3.3v |      |   |  1 || 2  |   |      | 5v      |     |     |
+ |   2 |   8 |   SDA.1 |   IN | 1 |  3 || 4  |   |      | 5V      |     |     |
+ |   3 |   9 |   SCL.1 |   IN | 1 |  5 || 6  |   |      | 0v      |     |     |
+ |   4 |   7 | GPIO. 7 |   IN | 1 |  7 || 8  | 0 | IN   | TxD     | 15  | 14  |
+ |     |     |      0v |      |   |  9 || 10 | 1 | IN   | RxD     | 16  | 15  |
+ |  17 |   0 | GPIO. 0 |  OUT | 0 | 11 || 12 | 0 | IN   | GPIO. 1 | 1   | 18  |
+ |  27 |   2 | GPIO. 2 |   IN | 0 | 13 || 14 |   |      | 0v      |     |     |
+ |  22 |   3 | GPIO. 3 |   IN | 0 | 15 || 16 | 0 | IN   | GPIO. 4 | 4   | 23  |
+ |     |     |    3.3v |      |   | 17 || 18 | 0 | IN   | GPIO. 5 | 5   | 24  |
+ |  10 |  12 |    MOSI |   IN | 0 | 19 || 20 |   |      | 0v      |     |     |
+ |   9 |  13 |    MISO |   IN | 0 | 21 || 22 | 0 | IN   | GPIO. 6 | 6   | 25  |
+ |  11 |  14 |    SCLK |   IN | 0 | 23 || 24 | 1 | IN   | CE0     | 10  | 8   |
+ |     |     |      0v |      |   | 25 || 26 | 1 | IN   | CE1     | 11  | 7   |
+ |   0 |  30 |   SDA.0 |   IN | 1 | 27 || 28 | 1 | IN   | SCL.0   | 31  | 1   |
+ |   5 |  21 | GPIO.21 |   IN | 1 | 29 || 30 |   |      | 0v      |     |     |
+ |   6 |  22 | GPIO.22 |   IN | 1 | 31 || 32 | 0 | IN   | GPIO.26 | 26  | 12  |
+ |  13 |  23 | GPIO.23 |   IN | 0 | 33 || 34 |   |      | 0v      |     |     |
+ |  19 |  24 | GPIO.24 |   IN | 0 | 35 || 36 | 0 | IN   | GPIO.27 | 27  | 16  |
+ |  26 |  25 | GPIO.25 |   IN | 0 | 37 || 38 | 0 | IN   | GPIO.28 | 28  | 20  |
+ |     |     |      0v |      |   | 39 || 40 | 0 | IN   | GPIO.29 | 29  | 21  |
+ +-----+-----+---------+------+---+----++----+---+------+---------+-----+-----+
+ | BCM | wPi |   Name  | Mode | V | Physical | V | Mode | Name    | wPi | BCM |
+ +-----+-----+---------+------+---+---Pi 3---+---+------+---------+-----+-----+
+```
+
+From this you can easily read the mapping of pins. The [go-rpio] lib uses the BCM numbering. In my case I connected the BCM pin #17 which is wPi #0, GPIO. 0 and physical #11.
+
+
+[gpio utility]: http://wiringpi.com/the-gpio-utility/
+
+### 3. Running the exe as Service Daemon
+
+Strictly speaking you don't need this, but it is nice to have your process supervised and restarted when it crashes and also you want automatic start-up on boot. To do all this you could roll your own or use something well done already existing package: *daemontools*. A little write-up on this you can find at: 
+
+* <https://info-beamer.com/blog/running-info-beamer-in-production>
+
+You basically need some dirs, the exe, a soft link and two run scripts. After you installed the daemontools you create the dirs and put the run scripts in place and create the service dir softlink. 
+
+```
+$ mkdir -p gocean/log
+```
+
+Put the cross compiled exe in `gocean` and the run scripts from `daemontools-scripts` in the repo to  `gocean` and `gocean/log` respectively. Last thing to do then is linking the service, svscan will start it automatically after a few seconds:
+
+```
+$ ln -s /etc/service/gocean /<your basedir>/gocean
+```
+
+Of course depends on where you put your stuff, but must be linked into the `/etc/service` folder as this is where daemon will pick it up from. 
+
