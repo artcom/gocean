@@ -377,6 +377,6 @@ func main() {
 		}
 	}
 
-	// start portreading and pushing bytewise to the parser
+	// start reading from port and forward it byte wise to the parser
 	loopread(flag.Arg(0), *baud, func(c byte) { pp.push(c) })
 }
