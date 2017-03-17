@@ -358,15 +358,18 @@ func main() {
 		handlerPrepper[f_idx]()
 	}
 
-	// create parser instance in default start state
-	pp := PacketParser{}
-	pp.reset()
-
 	// default packet dumper always on list
 	if !*quiet {
 		AppendHandler(packetHandlerFunc(print_packet_state))
 	}
 
+	// create parser instance in default start state and connect packet
+	// dispatcher callback. The callback will go over the installed handler
+	// list and call each one with the complete packet. Before that the
+	// sensor id is filtered when such an --id=<id> option was given on the
+	// command line.
+	pp := PacketParser{}
+	pp.reset()
 	pp.packetCallback = func(s *IQfyDruckSensor) {
 		dbg.Printf("->%s<-\n", s.sensor_id())
 		// filter for "unwanted" packets and call packet handlers func
