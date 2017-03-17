@@ -155,5 +155,5 @@ Put the cross compiled exe in `gocean` and the run scripts from `daemontools-scr
 $ ln -s /etc/service/gocean /<your basedir>/gocean
 ```
 
-Of course depends on where you put your stuff, but must be linked into the `/etc/service` folder as this is where daemon will pick it up from. 
+Of course depends on where you put your stuff, but must be linked into the `/etc/service` folder as this is from where the daemon will pick it up.
 
