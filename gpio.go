@@ -4,15 +4,21 @@ import (
 	"flag"
 	"github.com/stianeikeland/go-rpio"
 	"log"
+	"time"
 )
 
 var (
-	gpio int = -1
+	gpio      int               = -1
+	lowdown   bool              = false
+	stateFunc map[string]func() = map[string]func(){}
 )
 
 func init() {
 	// raspberry GPIO pin signaling only when flag is given
 	flag.IntVar(&gpio, "gpio", -1, "GPIO pin #no output, -1 means no gpio")
+
+	// When set, the LED goes off on button down
+	flag.BoolVar(&lowdown, "lowdown", false, "pull GPIO pin low on button do. Usually it is the other way round")
 
 	AppendHandlerPrepper(register_gpio_handler)
 }
@@ -32,6 +38,21 @@ func register_gpio_handler() {
 	}
 
 	h := &GPIOHandler{pin: pin}
+
+	// define up / down state callbacks in according to lowdown flag
+	if lowdown {
+		stateFunc["down"] = h.pin.Low
+		stateFunc["up"] = h.pin.High
+	} else {
+		stateFunc["down"] = h.pin.High
+		stateFunc["up"] = h.pin.Low
+	}
+	// pin init sequence
+	stateFunc["up"]()
+	stateFunc["down"]()
+	time.Sleep(2 * time.Second)
+	stateFunc["up"]()
+
 	AppendHandler(h)
 }
 
@@ -42,11 +63,21 @@ type GPIOHandler struct {
 
 func (h GPIOHandler) handle_sensor_packet(s *IQfyDruckSensor) {
 	log.Println(s) // print current button state on stdout
-	if s.state() == "down" {
-		h.pin.High()
-	} else {
-		h.pin.Low()
+
+	pinFunc := stateFunc[s.state()]
+	if pinFunc == nil {
+		log.Printf("no func defined for button state: '%v'\n", s.state())
+		return
 	}
+	pinFunc()
+
+	/*
+		if s.state() == "down" {
+			h.pin.High()
+		} else {
+			h.pin.Low()
+		}
+	*/
 }
 
 // raspberry GPIO connection
